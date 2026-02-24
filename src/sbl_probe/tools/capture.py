@@ -12,7 +12,7 @@ def register_tools(mcp, manager: ConnectionManager) -> None:
     """Register capture tools with the MCP server."""
 
     @mcp.tool()
-    def capture_start(name: str, max_frames: int = 10000) -> dict:
+    def capture_start(name: str, max_frames: int = 10000, duration: float | None = None) -> dict:
         """Start background capture on a connection.
 
         Continuously reads from the serial port and stores decoded frames
@@ -24,6 +24,9 @@ def register_tools(mcp, manager: ConnectionManager) -> None:
         Args:
             name: Connection name.
             max_frames: Max frames in the ring buffer. Default: 10000.
+            duration: Optional capture duration in seconds. When set, capture
+                auto-stops after this many seconds. The buffer persists for
+                querying with capture_read.
         """
         try:
             conn = manager.get(name)
@@ -37,13 +40,16 @@ def register_tools(mcp, manager: ConnectionManager) -> None:
                 buffer=buf,
             )
             conn.capture = engine
-            engine.start()
+            engine.start(duration=duration)
 
-            return {
+            result = {
                 "status": "capturing",
                 "connection": name,
                 "max_frames": max_frames,
             }
+            if duration is not None:
+                result["duration"] = duration
+            return result
         except ValueError as e:
             return {"error": str(e)}
 
@@ -59,8 +65,8 @@ def register_tools(mcp, manager: ConnectionManager) -> None:
         """
         try:
             conn = manager.get(name)
-            if not conn.is_capturing:
-                return {"error": f"No active capture on '{name}'"}
+            if conn.capture is None:
+                return {"error": f"No capture on '{name}'"}
 
             summary = conn.capture.stop()
             return {

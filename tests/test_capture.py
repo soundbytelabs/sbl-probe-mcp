@@ -232,6 +232,64 @@ class TestCaptureEngine:
 
         assert summary["errors"] >= 1
 
+    def test_start_with_duration_auto_stops(self):
+        """Engine auto-stops after the specified duration."""
+        transport = MagicMock()
+        call_count = 0
+
+        def mock_read(size=4096, timeout=0.05):
+            nonlocal call_count
+            call_count += 1
+            return f"line{call_count}\n".encode()
+
+        transport.read.side_effect = mock_read
+
+        decoder = RawDecoder()
+        buf = CaptureBuffer(max_frames=100)
+        engine = CaptureEngine(transport, decoder, buf)
+
+        engine.start(duration=0.2)
+        assert engine.is_running
+
+        # Wait for duration to expire
+        time.sleep(0.5)
+        assert not engine.is_running
+        assert len(buf) >= 1
+
+    def test_stop_after_duration_expired(self):
+        """Calling stop() after duration expired returns summary without error."""
+        transport = MagicMock()
+        transport.read.return_value = b"data\n"
+
+        decoder = RawDecoder()
+        buf = CaptureBuffer(max_frames=100)
+        engine = CaptureEngine(transport, decoder, buf)
+
+        engine.start(duration=0.1)
+        time.sleep(0.3)
+
+        # Thread has exited, but stop() should still work
+        assert not engine.is_running
+        summary = engine.stop()
+        assert "frames_captured" in summary
+        assert "duration_seconds" in summary
+
+    def test_duration_early_stop(self):
+        """Calling stop() before duration expires stops cleanly."""
+        transport = MagicMock()
+        transport.read.return_value = b""
+
+        decoder = RawDecoder()
+        buf = CaptureBuffer(max_frames=100)
+        engine = CaptureEngine(transport, decoder, buf)
+
+        engine.start(duration=10.0)  # Long duration
+        assert engine.is_running
+
+        summary = engine.stop()
+        assert not engine.is_running
+        assert "frames_captured" in summary
+
     def test_buffer_accessible_during_capture(self):
         """Can query the buffer while capture is running."""
         transport = MagicMock()

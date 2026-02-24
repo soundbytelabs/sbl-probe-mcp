@@ -42,9 +42,10 @@ class CaptureEngine:
     def buffer(self) -> CaptureBuffer:
         return self._buffer
 
-    def start(self) -> None:
+    def start(self, duration: float | None = None) -> None:
         if self.is_running:
             raise RuntimeError("Capture is already running")
+        self._duration = duration
         self._stop_event.clear()
         self._started_at = time.monotonic()
         self._thread = threading.Thread(
@@ -56,10 +57,11 @@ class CaptureEngine:
 
     def stop(self) -> dict:
         """Stop capture and return summary stats."""
-        if not self.is_running:
+        if self._thread is None:
             raise RuntimeError("Capture is not running")
-        self._stop_event.set()
-        self._thread.join(timeout=3.0)
+        if self._thread.is_alive():
+            self._stop_event.set()
+            self._thread.join(timeout=3.0)
         self._thread = None
 
         duration = time.monotonic() - self._started_at if self._started_at else 0
@@ -75,7 +77,10 @@ class CaptureEngine:
 
     def _reader_loop(self) -> None:
         """Main capture loop — runs in a background thread."""
+        deadline = (self._started_at + self._duration) if self._duration else None
         while not self._stop_event.is_set():
+            if deadline and time.monotonic() >= deadline:
+                break
             try:
                 data = self._transport.read(size=4096, timeout=0.05)
                 if data:
