@@ -16,6 +16,7 @@ class CaptureStats:
 
     frames_captured: int = 0
     frames_dropped: int = 0
+    frames_filtered: int = 0
     bytes_processed: int = 0
     errors: int = 0
 
@@ -84,6 +85,33 @@ class CaptureBuffer:
             results = results[-last_n:]
 
         return results
+
+    def group_counts(self, groups: dict[str, str]) -> dict[str, int]:
+        """Count frames by regex group. First match wins.
+
+        Args:
+            groups: Mapping of group name to regex pattern.
+
+        Returns:
+            Counts per group plus an "unmatched" count.
+        """
+        compiled = {name: re.compile(pat) for name, pat in groups.items()}
+        counts: dict[str, int] = {name: 0 for name in groups}
+        counts["unmatched"] = 0
+
+        with self._lock:
+            for frame in self._frames:
+                text = frame.data.decode("utf-8", errors="replace")
+                matched = False
+                for name, regex in compiled.items():
+                    if regex.search(text):
+                        counts[name] += 1
+                        matched = True
+                        break
+                if not matched:
+                    counts["unmatched"] += 1
+
+        return counts
 
     def clear(self) -> None:
         with self._lock:

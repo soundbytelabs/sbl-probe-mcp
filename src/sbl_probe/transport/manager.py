@@ -49,6 +49,12 @@ class Connection:
         }
         if self.is_capturing:
             result["capture_frames"] = len(self.capture.buffer)
+            if self.capture.filter_pattern is not None:
+                result["capture_filter"] = self.capture.filter_pattern
+            if self.capture.trigger_pattern is not None:
+                result["capture_trigger"] = (
+                    "fired" if self.capture.triggered else "waiting"
+                )
         return result
 
 

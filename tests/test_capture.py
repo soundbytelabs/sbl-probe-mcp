@@ -403,3 +403,442 @@ class TestConnectionCaptureState:
         # Close should stop the capture
         mgr.close("test")
         assert not engine.is_running
+
+
+class TestIngressFilter:
+    """Tests for the capture engine ingress filter (FDP-002 feature 1)."""
+
+    def test_filter_passes_matching_frames(self):
+        transport = MagicMock()
+        call_count = 0
+
+        def mock_read(size=4096, timeout=0.05):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return b"enc delta: 5\n"
+            if call_count == 2:
+                return b"knob1: 32000\n"
+            if call_count == 3:
+                return b"enc delta: -3\n"
+            return b""
+
+        transport.read.side_effect = mock_read
+        decoder = RawDecoder()
+        buf = CaptureBuffer(max_frames=100)
+        engine = CaptureEngine(transport, decoder, buf, filter_pattern=r"enc delta")
+
+        engine.start()
+        time.sleep(0.3)
+        engine.stop()
+
+        frames = buf.query()
+        assert len(frames) == 2
+        assert all(b"enc delta" in f.data for f in frames)
+
+    def test_filter_rejects_non_matching_frames(self):
+        transport = MagicMock()
+        call_count = 0
+
+        def mock_read(size=4096, timeout=0.05):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 3:
+                return f"knob{call_count}: {call_count * 1000}\n".encode()
+            return b""
+
+        transport.read.side_effect = mock_read
+        decoder = RawDecoder()
+        buf = CaptureBuffer(max_frames=100)
+        engine = CaptureEngine(transport, decoder, buf, filter_pattern=r"enc delta")
+
+        engine.start()
+        time.sleep(0.3)
+        engine.stop()
+
+        assert len(buf) == 0
+        assert buf.stats.frames_filtered == 3
+
+    def test_filter_tracks_filtered_count(self):
+        transport = MagicMock()
+        call_count = 0
+
+        def mock_read(size=4096, timeout=0.05):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return b"enc delta: 5\n"
+            if call_count == 2:
+                return b"knob1: 32000\n"
+            if call_count == 3:
+                return b"knob2: 16000\n"
+            return b""
+
+        transport.read.side_effect = mock_read
+        decoder = RawDecoder()
+        buf = CaptureBuffer(max_frames=100)
+        engine = CaptureEngine(transport, decoder, buf, filter_pattern=r"enc")
+
+        engine.start()
+        time.sleep(0.3)
+        summary = engine.stop()
+
+        assert len(buf) == 1
+        assert buf.stats.frames_filtered == 2
+        assert summary["frames_filtered"] == 2
+
+    def test_no_filter_buffers_everything(self):
+        transport = MagicMock()
+        call_count = 0
+
+        def mock_read(size=4096, timeout=0.05):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 3:
+                return f"line{call_count}\n".encode()
+            return b""
+
+        transport.read.side_effect = mock_read
+        decoder = RawDecoder()
+        buf = CaptureBuffer(max_frames=100)
+        engine = CaptureEngine(transport, decoder, buf)
+
+        engine.start()
+        time.sleep(0.3)
+        engine.stop()
+
+        assert len(buf) == 3
+        assert buf.stats.frames_filtered == 0
+
+    def test_filter_with_regex(self):
+        transport = MagicMock()
+        call_count = 0
+
+        def mock_read(size=4096, timeout=0.05):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return b"btn1: pressed\n"
+            if call_count == 2:
+                return b"btn2: released\n"
+            if call_count == 3:
+                return b"enc delta: 5\n"
+            return b""
+
+        transport.read.side_effect = mock_read
+        decoder = RawDecoder()
+        buf = CaptureBuffer(max_frames=100)
+        engine = CaptureEngine(transport, decoder, buf, filter_pattern=r"btn\d+")
+
+        engine.start()
+        time.sleep(0.3)
+        engine.stop()
+
+        assert len(buf) == 2
+        assert buf.stats.frames_filtered == 1
+
+
+class TestGroupCounts:
+    """Tests for CaptureBuffer.group_counts (FDP-002 feature 2)."""
+
+    def test_empty_buffer(self):
+        buf = CaptureBuffer(max_frames=100)
+        counts = buf.group_counts({"enc": "enc", "btn": "btn"})
+        assert counts == {"enc": 0, "btn": 0, "unmatched": 0}
+
+    def test_single_group(self):
+        buf = CaptureBuffer(max_frames=100)
+        buf.append(_make_frame("enc delta: 5"))
+        buf.append(_make_frame("enc delta: -3"))
+        buf.append(_make_frame("other stuff"))
+        counts = buf.group_counts({"enc": "enc delta"})
+        assert counts == {"enc": 2, "unmatched": 1}
+
+    def test_multiple_groups(self):
+        buf = CaptureBuffer(max_frames=100)
+        buf.append(_make_frame("enc delta: 5"))
+        buf.append(_make_frame("btn1: pressed"))
+        buf.append(_make_frame("knob1: 32000"))
+        buf.append(_make_frame("enc delta: -3"))
+        buf.append(_make_frame("btn2: released"))
+        buf.append(_make_frame("knob2: 16000"))
+        buf.append(_make_frame("something else"))
+
+        counts = buf.group_counts({
+            "enc": r"enc delta",
+            "btn": r"btn\d+",
+            "knob": r"knob\d+",
+        })
+        assert counts == {"enc": 2, "btn": 2, "knob": 2, "unmatched": 1}
+
+    def test_first_match_wins(self):
+        buf = CaptureBuffer(max_frames=100)
+        # "enc btn" matches both groups — first group wins
+        buf.append(_make_frame("enc btn combo"))
+        counts = buf.group_counts({"enc": "enc", "btn": "btn"})
+        assert counts == {"enc": 1, "btn": 0, "unmatched": 0}
+
+    def test_all_unmatched(self):
+        buf = CaptureBuffer(max_frames=100)
+        buf.append(_make_frame("random data"))
+        buf.append(_make_frame("more stuff"))
+        counts = buf.group_counts({"enc": "enc", "btn": "btn"})
+        assert counts == {"enc": 0, "btn": 0, "unmatched": 2}
+
+    def test_counts_add_up_to_buffer_size(self):
+        buf = CaptureBuffer(max_frames=100)
+        for i in range(10):
+            buf.append(_make_frame(f"enc delta: {i}"))
+        for i in range(5):
+            buf.append(_make_frame(f"btn{i}: pressed"))
+        for i in range(3):
+            buf.append(_make_frame(f"misc {i}"))
+
+        counts = buf.group_counts({"enc": "enc", "btn": "btn"})
+        total = sum(counts.values())
+        assert total == len(buf)
+
+
+class TestTriggerMode:
+    """Tests for capture engine trigger mode (FDP-002 feature 3)."""
+
+    def test_trigger_fires(self):
+        transport = MagicMock()
+        call_count = 0
+
+        def mock_read(size=4096, timeout=0.05):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return b"idle noise\n"
+            if call_count == 2:
+                return b"more noise\n"
+            if call_count == 3:
+                return b"ERROR: something broke\n"
+            if call_count == 4:
+                return b"post-error data\n"
+            return b""
+
+        transport.read.side_effect = mock_read
+        decoder = RawDecoder()
+        buf = CaptureBuffer(max_frames=100)
+        engine = CaptureEngine(
+            transport, decoder, buf, trigger_pattern=r"ERROR"
+        )
+
+        assert not engine.triggered
+        engine.start()
+        time.sleep(0.4)
+        summary = engine.stop()
+
+        assert engine.triggered
+        assert summary["triggered"] is True
+        assert "trigger_at" in summary
+        # Should have captured the trigger frame + post-trigger
+        frames = buf.query()
+        assert len(frames) >= 1
+        assert any(b"ERROR" in f.data for f in frames)
+        # Pre-trigger noise should NOT be in buffer
+        assert not any(b"idle noise" in f.data for f in frames)
+
+    def test_trigger_never_fires(self):
+        transport = MagicMock()
+        call_count = 0
+
+        def mock_read(size=4096, timeout=0.05):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 3:
+                return f"normal line {call_count}\n".encode()
+            return b""
+
+        transport.read.side_effect = mock_read
+        decoder = RawDecoder()
+        buf = CaptureBuffer(max_frames=100)
+        engine = CaptureEngine(
+            transport, decoder, buf, trigger_pattern=r"ERROR"
+        )
+
+        engine.start()
+        time.sleep(0.3)
+        summary = engine.stop()
+
+        assert not engine.triggered
+        assert summary["triggered"] is False
+        assert len(buf) == 0
+
+    def test_pretrigger_flushes_context(self):
+        transport = MagicMock()
+        call_count = 0
+
+        def mock_read(size=4096, timeout=0.05):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return b"context-1\n"
+            if call_count == 2:
+                return b"context-2\n"
+            if call_count == 3:
+                return b"context-3\n"
+            if call_count == 4:
+                return b"ERROR: crash\n"
+            if call_count == 5:
+                return b"aftermath\n"
+            return b""
+
+        transport.read.side_effect = mock_read
+        decoder = RawDecoder()
+        buf = CaptureBuffer(max_frames=100)
+        engine = CaptureEngine(
+            transport, decoder, buf,
+            trigger_pattern=r"ERROR",
+            pretrigger=2,
+        )
+
+        engine.start()
+        time.sleep(0.5)
+        engine.stop()
+
+        frames = buf.query()
+        texts = [f.data.decode() for f in frames]
+        # Should have pretrigger context + trigger + aftermath
+        assert "context-2" in texts
+        assert "context-3" in texts
+        assert "ERROR: crash" in texts
+        # context-1 is outside pretrigger window (only 2 kept)
+        assert "context-1" not in texts
+
+    def test_pretrigger_overflow(self):
+        """Pretrigger deque evicts oldest when full."""
+        transport = MagicMock()
+        call_count = 0
+
+        def mock_read(size=4096, timeout=0.05):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 10:
+                return f"pre-{call_count}\n".encode()
+            if call_count == 11:
+                return b"TRIGGER\n"
+            return b""
+
+        transport.read.side_effect = mock_read
+        decoder = RawDecoder()
+        buf = CaptureBuffer(max_frames=100)
+        engine = CaptureEngine(
+            transport, decoder, buf,
+            trigger_pattern=r"TRIGGER",
+            pretrigger=3,
+        )
+
+        engine.start()
+        time.sleep(0.5)
+        engine.stop()
+
+        frames = buf.query()
+        texts = [f.data.decode() for f in frames]
+        # Only last 3 pre-trigger frames + trigger
+        assert "TRIGGER" in texts
+        assert "pre-8" in texts
+        assert "pre-9" in texts
+        assert "pre-10" in texts
+        assert "pre-1" not in texts
+        assert "pre-7" not in texts
+
+    def test_trigger_plus_filter_compose(self):
+        """Filter runs first, then trigger checks filtered frames."""
+        transport = MagicMock()
+        call_count = 0
+
+        def mock_read(size=4096, timeout=0.05):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return b"knob1: 30000\n"  # filtered out
+            if call_count == 2:
+                return b"btn1: pressed\n"  # passes filter, not trigger
+            if call_count == 3:
+                return b"btn1: ERROR\n"  # passes filter, IS trigger
+            if call_count == 4:
+                return b"btn2: released\n"  # passes filter, post-trigger
+            if call_count == 5:
+                return b"knob2: 16000\n"  # filtered out
+            return b""
+
+        transport.read.side_effect = mock_read
+        decoder = RawDecoder()
+        buf = CaptureBuffer(max_frames=100)
+        engine = CaptureEngine(
+            transport, decoder, buf,
+            filter_pattern=r"btn",
+            trigger_pattern=r"ERROR",
+        )
+
+        engine.start()
+        time.sleep(0.5)
+        engine.stop()
+
+        frames = buf.query()
+        texts = [f.data.decode() for f in frames]
+        # Only btn frames after trigger
+        assert "btn1: ERROR" in texts
+        assert "btn2: released" in texts
+        # Pre-trigger btn frame not buffered (no pretrigger)
+        assert "btn1: pressed" not in texts
+        # Knob frames always filtered
+        assert not any("knob" in t for t in texts)
+        assert buf.stats.frames_filtered >= 2
+
+    def test_no_trigger_captures_immediately(self):
+        """Without trigger, capture starts immediately (backwards compat)."""
+        transport = MagicMock()
+        call_count = 0
+
+        def mock_read(size=4096, timeout=0.05):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 3:
+                return f"line{call_count}\n".encode()
+            return b""
+
+        transport.read.side_effect = mock_read
+        decoder = RawDecoder()
+        buf = CaptureBuffer(max_frames=100)
+        engine = CaptureEngine(transport, decoder, buf)
+
+        assert engine.triggered  # No trigger = already triggered
+        engine.start()
+        time.sleep(0.3)
+        engine.stop()
+
+        assert len(buf) == 3
+
+    def test_trigger_mid_batch(self):
+        """Trigger fires mid-batch — frames after trigger in same batch are buffered."""
+        transport = MagicMock()
+        call_count = 0
+
+        def mock_read(size=4096, timeout=0.05):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # Multiple lines in one read — trigger is in the middle
+                return b"before\nTRIGGER\nafter\n"
+            return b""
+
+        transport.read.side_effect = mock_read
+        decoder = RawDecoder()
+        buf = CaptureBuffer(max_frames=100)
+        engine = CaptureEngine(
+            transport, decoder, buf, trigger_pattern=r"TRIGGER"
+        )
+
+        engine.start()
+        time.sleep(0.3)
+        engine.stop()
+
+        frames = buf.query()
+        texts = [f.data.decode() for f in frames]
+        assert "TRIGGER" in texts
+        assert "after" in texts
+        assert "before" not in texts
