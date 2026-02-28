@@ -5,12 +5,26 @@ build-backend = "hatchling.build"
 [project]
 name = "sbl-probe"
 version = "0.1.0"
-description = "Serial communication & protocol analysis MCP server for Claude Code"
+description = "Serial communication & protocol analysis MCP server"
 requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Sound Byte Labs" }]
+keywords = ["mcp", "serial", "embedded", "protocol-analysis", "uart"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Embedded Systems",
+    "Topic :: System :: Hardware",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "mcp",
     "pyserial",
 ]
+
+[project.urls]
+Repository = "https://github.com/soundbytelabs/mcp-sbl-probe"
 
 [project.optional-dependencies]
 dev = [
