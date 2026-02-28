@@ -5,7 +5,7 @@
   "description": "Serial communication and protocol analysis for embedded devices",
   "version": "0.1.0",
   "repository": {
-    "url": "https://github.com/soundbytelabs/mcp-sbl-probe",
+    "url": "https://github.com/soundbytelabs/sbl-probe-mcp",
     "source": "github"
   },
   "packages": [

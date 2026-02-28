@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/soundbytelabs/mcp-sbl-probe"
+Repository = "https://github.com/soundbytelabs/sbl-probe-mcp"
 
 [project.optional-dependencies]
 dev = [

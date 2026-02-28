@@ -2,9 +2,9 @@
 
 # sbl-probe
 
-Serial communication and protocol analysis MCP server. Gives Claude direct access to serial ports for reading, writing, decoding, and capturing embedded device output — no more copy-pasting from picocom.
+Serial communication and protocol analysis MCP server. Gives AI coding assistants direct access to serial ports for reading, writing, decoding, and capturing embedded device output — no more copy-pasting from picocom.
 
-Part of the [Sound Byte Labs](https://github.com/soundbytelabs) embedded tooling suite, alongside [sbl-debugger](https://github.com/soundbytelabs/sbl-debugger) for hardware debugging.
+Part of the [Sound Byte Labs](https://github.com/soundbytelabs) embedded tooling suite, alongside [sbl-debugger](https://github.com/soundbytelabs/sbl-debugger-mcp) for hardware debugging.
 
 ## Quick Start
 
@@ -30,7 +30,7 @@ Register in `.mcp.json` at your workspace root:
 }
 ```
 
-Restart Claude Code and the tools are available immediately.
+Restart your MCP client and the tools are available immediately.
 
 ## Tools
 
