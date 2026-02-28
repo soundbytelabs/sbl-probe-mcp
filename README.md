@@ -6,29 +6,39 @@ Serial communication and protocol analysis MCP server. Gives AI coding assistant
 
 Part of the [Sound Byte Labs](https://github.com/soundbytelabs) embedded tooling suite, alongside [sbl-debugger](https://github.com/soundbytelabs/sbl-debugger-mcp) for hardware debugging.
 
-## Quick Start
+## Installation
+
+Create a virtual environment and install the package:
 
 ```bash
-# Install (editable, into SBL venv)
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install
 pip install -e .
 
 # Or with test dependencies
 pip install -e ".[dev]"
 ```
 
-Register in `.mcp.json` at your workspace root:
+## MCP Configuration
+
+Register the server in your MCP client's config. For most clients, add to `.mcp.json` in your project root:
 
 ```json
 {
   "mcpServers": {
     "sbl-probe": {
       "type": "stdio",
-      "command": "/path/to/venv/bin/python",
+      "command": "/absolute/path/to/.venv/bin/python",
       "args": ["-m", "sbl_probe"]
     }
   }
 }
 ```
+
+> **Important:** Use the absolute path to the Python binary inside your virtual environment.
+> For example: `/home/you/sbl-probe-mcp/.venv/bin/python`
 
 Restart your MCP client and the tools are available immediately.
 
@@ -64,9 +74,10 @@ Restart your MCP client and the tools are available immediately.
 
 | Tool | Description |
 |------|-------------|
-| `capture_start` | Start background capture into a ring buffer |
+| `capture_start` | Start background capture into a ring buffer (with optional filter, trigger, pretrigger) |
 | `capture_stop` | Stop capture, return summary stats |
 | `capture_read` | Query captured frames (filter by regex, time range, last N) |
+| `capture_stats` | Get frame counts grouped by pattern without reading all frames |
 | `capture_save` | Save capture buffer to a JSON Lines file |
 | `capture_load` | Load a previously saved capture |
 
@@ -90,7 +101,7 @@ sbl_probe/
     ├── connection.py   # list_ports, open, close, connections
     ├── data.py         # read, read_raw, write
     ├── protocol.py     # set_decoder, decode_buffer, list_decoders
-    ├── capture.py      # capture_start/stop/read/save/load
+    ├── capture.py      # capture_start/stop/read/stats/save/load
     └── diagnostics.py  # probe_baud
 ```
 
@@ -99,6 +110,7 @@ Key design decisions:
 - **Threaded pyserial** with `asyncio.to_thread()` — keeps the MCP event loop responsive without the complexity of `pyserial-asyncio`
 - **Pluggable decoders** — register new decoders by name, swap at runtime via `set_decoder`
 - **Background capture** — daemon thread feeds decoded frames into a ring buffer; query with regex, time range, or tail the last N frames
+- **Ingress filtering** — filter and trigger patterns on `capture_start` keep the buffer focused on what matters
 - **Error dicts, not exceptions** — tools return `{"error": "..."}` instead of crashing the server
 
 ## Adding a Custom Decoder
@@ -125,7 +137,7 @@ registry.register("my_proto", MyDecoder)
 ## Running Tests
 
 ```bash
-pytest                    # 92 tests
+pytest                    # 113 tests
 pytest -v                 # verbose
 pytest tests/test_capture.py  # just capture tests
 ```
