@@ -34,3 +34,5 @@ htmlcov/
 
 # Captures (ephemeral serial data)
 *.jsonl
+
+venv/
