@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import Callable
 
 from sbl_probe.decoders.base import Frame, Decoder
+from sbl_probe.decoders.midi import MidiDecoder
 from sbl_probe.decoders.raw import RawDecoder
 
-__all__ = ["Frame", "Decoder", "RawDecoder", "DecoderRegistry"]
+__all__ = ["Frame", "Decoder", "RawDecoder", "MidiDecoder", "DecoderRegistry"]
 
 
 class DecoderRegistry:
@@ -34,4 +35,5 @@ class DecoderRegistry:
 
 # Default registry with built-in decoders
 registry = DecoderRegistry()
+registry.register("midi", MidiDecoder)
 registry.register("raw", RawDecoder)
